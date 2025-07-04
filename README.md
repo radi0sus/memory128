@@ -1,2 +1,2 @@
 # memory128
-A memory Game for the C128 (VDC)
+A Memory Game for the C128 (VDC)
