@@ -1,0 +1,101 @@
+.label key_table=$213f
+.label card_match=$2721
+.label search_loop=$211f
+.label dst_high_crd2=$200b
+.label quit_game=$213c
+.label reset_card=$2809
+.label score=$2010
+.label src_high=$2001
+.label decout_tens_done=$2b8c
+.label inc_out_loop=$25fa
+.label no_key=$213d
+.label invalid_key=$213e
+.label freqs=$2c1f
+.label value_2=$200f
+.label value_1=$200e
+.label exit=$2106
+.label play_match_snd=$2c27
+.label loop_ch=$206f
+.label clear_used=$2589
+.label show_1=$216f {
+}
+.label show_win=$2aca
+.label check_no_cards=$2866
+.label display_card=$2655
+.label dst_low_crd2=$200a
+.label show_5=$225b {
+}
+.label show_4=$2220 {
+}
+.label show_3=$21e5 {
+}
+.label dst_low_crd1=$2006
+.label show_2=$21aa {
+}
+.label copy=$25cb
+.label show_8=$230c {
+}
+.label show_7=$22d1 {
+}
+.label show_6=$2296 {
+}
+.label return_from_store_cord_2=$26ca
+.label dst_low=$2002
+.label dst_high=$2003
+.label card_face_origin=$2545
+.label main_loop=$20f6
+.label decout=$2b05
+.label match_cnt=$200d
+.label card_reset=$27b8 {
+}
+.label decout_tens_loop=$2b81
+.label decout_hund_loop=$2b11
+.label src_high_crd2=$2009
+.label src_high_crd1=$2005
+.label used=$25bb
+.label fill_loop=$2591
+.label found_key=$212a
+.label show_Q=$2347 {
+}
+.label show_E=$23bd {
+}
+.label store_cord_2=$270c
+.label store_cord_1=$26f9
+.label show_I=$24e4 {
+}
+.label decout_hund_done=$2b1c
+.label jump_addr=$2012
+.label show_U=$24a9 {
+}
+.label show_T=$2433 {
+}
+.label show_R=$23f8 {
+}
+.label show_Y=$246e {
+}
+.label src_low_crd2=$2008
+.label show_W=$2382 {
+}
+.label src_low_crd1=$2004
+.label loop_ch3=$20d9
+.label loop_ch2=$20a4
+.label card_face_array=$2615
+.label match_related=$26b9
+.label out_loop=$25df
+.label jsr_card_reset=$26ed
+.label fill_unique_array=$2585
+.label param=$2011
+.label array=$25ab
+.label play_loop=$2c42
+.label set_score_to_zero=$26e8
+.label match=$200c
+.label start=$2030
+.label src_low=$2000
+.label special_card_face_array=$2541
+.label dst_high_crd1=$2007
+.label find_new_number=$2591
+.label return_from_card_match=$26f0
+.label card_pos_array=$251f
+.label handle_input=$2114
+.label handler_table=$214f
+.label inner_loop=$25ef
