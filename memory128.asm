@@ -817,9 +817,10 @@ play_loop:
     cpx #8                          // completed 8 Bytes ?
     bne play_loop                   // no? -> play_loop
     
-    lda #%00000000                  // volume off
+    lda #%10000000                  // volume off and voice 3
     sta $d418                       // store in volume / mod reg
     rts                             // return
+    
 
 /* macros ============================================================================= */ 
 
