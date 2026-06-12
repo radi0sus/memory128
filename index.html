@@ -18,17 +18,10 @@
 }
 
 :root{
-  /*
-    C128 VDC 80×25 auf 4:3:
-    80*10 = 800
-    25*24 = 600
-    Zeichen-Seitenverhältnis = 24/10 = 2.4
-  */
-  --cw: 8px;   /* statt 10px */
-  --ch: 16px;  /* statt 24px */
+  --cw: 8px;
+  --ch: 16px;
   --fs: 8px;
   --glyph-scale-y: 2;
-
   --bg:#000000;
   --fg:#42ffff;
 }
@@ -65,6 +58,8 @@ body{
   user-select:none;
   outline:none;
   gap:0;
+  /* Cursor für klickbare Bereiche – wird per JS gesetzt */
+  cursor:default;
 }
 
 .cell{
@@ -86,6 +81,11 @@ body{
   text-align:center;
   transform:scaleY(var(--glyph-scale-y));
   transform-origin:center center;
+}
+
+/* Klickbare Zonen hervorheben */
+.cell.clickable{
+  cursor:pointer;
 }
 
 #license{
@@ -115,7 +115,7 @@ body{
 <div id="license">
   C64 TrueType fonts © Style64 —
   used unmodified via @font-face according to the included C64 TrueType license.
-  <a href="http://style64.org/c64-truetype" target="_blank" rel="noopener">style64.org/c64-truetype</a>
+  <a href="https://style64.org/c64-truetype" target="_blank" rel="noopener">https://style64.org/c64-truetype</a>
 </div>
 
 <script>
@@ -128,85 +128,55 @@ const ROWS = 25;
 const root = getComputedStyle(document.documentElement);
 const BG = root.getPropertyValue("--bg").trim();
 const FG = root.getPropertyValue("--fg").trim();
-const CARD_BG = root.getPropertyValue("--card").trim();
-const CARD_FG = root.getPropertyValue("--ink").trim();
 
 const screen = document.getElementById("screen");
-const wrap = document.getElementById("wrap");
+const wrap   = document.getElementById("wrap");
 
-let cells = [];
-let deck = [];
+let cells    = [];
+let deck     = [];
 let selected = [];
-let busy = false;
-let stopped = false;
-let score = 0;
+let busy     = false;
+let stopped  = false;
+let score    = 0;
 let winTimer = null;
 let winBlink = false;
 
-const keysTop = ["1","2","3","4","5","6","7","8"];
+const keysTop    = ["1","2","3","4","5","6","7","8"];
 const keysBottom = ["Q","W","E","R","T","Y","U","I"];
-const allKeys = keysTop.concat(keysBottom);
+const allKeys    = keysTop.concat(keysBottom);
+
+// Pixel-Position der Buchstaben (Zeile 10 = Top-Keys, Zeile 22 = Bottom-Keys)
+// Spalte: 4 + i*10
+const KEY_ROW_TOP    = 10;
+const KEY_ROW_BOTTOM = 22;
 
 const cardPositions = [
   [1,1],  [11,1], [21,1], [31,1],
   [41,1], [51,1], [61,1], [71,1],
-  [1,13], [11,13], [21,13], [31,13],
-  [41,13], [51,13], [61,13], [71,13]
+  [1,13], [11,13],[21,13],[31,13],
+  [41,13],[51,13],[61,13],[71,13]
 ];
+
+// ─── Hilfsfunktionen ────────────────────────────────────────────────
 
 function H(str){
   return str.match(/[0-9a-f]{2}/gi).map(x => parseInt(x,16));
 }
 
-/*
-  Wichtig:
-  Die Bytes sind VDC/C128-Screen-Zeichen.
-  High-Bit gesetzt = Reverse-Darstellung.
-  Für den Font wird das High-Bit entfernt und dann in C64-Pro-Mono-Zeichen übersetzt.
-*/
 function screenByteToC64ProChar(byte){
   byte &= 0xff;
-
-  /*
-    C64 Pro Mono / Style64 Private Use Mapping.
-
-    Uppercase/graphics, reverse off:
-      PETSCII $20-$3F -> U+E020-$E03F
-      PETSCII $40-$5F -> U+E040-$E05F
-      PETSCII $60-$7F -> U+E060-$E07F
-      PETSCII $A0-$BF -> U+E0A0-$E0BF
-
-    Uppercase/graphics, reverse on:
-      same logical PETSCII chars, but U+E200...
-  */
-
-  let petscii;
   let reverse = byte >= 0x80;
   let sc = byte & 0x7f;
-
-  /*
-    Reverse off screen-code to PETSCII:
-      screen $00-$1F -> PETSCII $40-$5F
-      screen $20-$3F -> PETSCII $20-$3F
-      screen $40-$5F -> PETSCII $60-$7F
-      screen $60-$7F -> PETSCII $A0-$BF
-  */
-  if(sc >= 0x00 && sc <= 0x1f){
-    petscii = 0x40 + sc;
-  }
-  else if(sc >= 0x20 && sc <= 0x3f){
-    petscii = sc;
-  }
-  else if(sc >= 0x40 && sc <= 0x5f){
-    petscii = 0x60 + (sc - 0x40);
-  }
-  else {
-    petscii = 0xa0 + (sc - 0x60);
-  }
-
+  let petscii;
+  if     (sc <= 0x1f) petscii = 0x40 + sc;
+  else if(sc <= 0x3f) petscii = sc;
+  else if(sc <= 0x5f) petscii = 0x60 + (sc - 0x40);
+  else                petscii = 0xa0 + (sc - 0x60);
   const base = reverse ? 0xe200 : 0xe000;
   return String.fromCodePoint(base + petscii);
 }
+
+// ─── Karten-Daten ───────────────────────────────────────────────────
 
 const BACK_BYTES = H(`
 CD A0 A0 CE CD A0 A0 CE
@@ -220,480 +190,416 @@ CE A0 A0 CD CE A0 A0 CD
 `);
 
 const FACE_BYTES = [
-  // Q1
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-8C 84 81 A0 A3 B2 B2 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-93 85 83 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-81 84 83 A0 A3 B2 B2 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A1
-  H(`
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 D5 DB C3 A0 A0 A0 A0
-A0 CA DB C9 B2 84 A0 A0
-A0 C3 DB CB A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-`),
-
-  // Q2
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-B1 B0 B0 B0 B0 B0 B0 B1
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A2
-  H(`
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 D5 DB C3 A0 A0 A0 A0
-A0 CA DB C9 B8 B1 A0 A0
-A0 C3 DB CB A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-`),
-
-  // Q3
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-90 8F 8B 85 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-B5 B3 B2 B8 B0 AC B0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A3
-  H(`
-4F 77 77 77 77 77 77 50
-65 20 20 20 20 20 20 67
-65 20 A0 A0 A0 A0 20 67
-65 20 A0 A0 A0 A0 20 67
-65 20 A0 A0 A0 A0 20 67
-65 20 A0 A0 A0 A0 20 67
-65 20 20 20 20 20 20 67
-4C 6F 6F 6F 6F 6F 6F 7A
-`),
-
-  // Q4
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-B1 B0 B0 B1 B0 B0 B1 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 98 8F 92 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-B1 B0 B0 B1 B0 B0 B1 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A4
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 D5 C3 C9 A0
-A0 A0 A0 A0 DD AF DD A0
-A0 A0 A0 A0 DD AF DD A0
-A0 A0 9A 85 92 C3 CB A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // Q5
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 90 92 89 8E 94 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A5
-  H(`
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 69 20 20 5F A0 A0
-A0 A0 A0 A0 A0 20 A0 A0
-A0 A0 A0 69 20 E9 A0 A0
-A0 A0 A0 20 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 20 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-`),
-
-  // Q6
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 C2 A0 AE C2 A0 A0 A0
-A0 EB C9 EE C2 A0 A0 A0
-A0 ED CB F1 CA C3 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 88 85 92 84 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A6
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 C3 F2 C3 A0 A0 A0 A0
-A0 A0 DD F0 C3 F0 C9 A0
-A0 A0 C2 EB C3 C2 C2 A0
-A0 A0 C2 ED C3 ED CB A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // Q7
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 C2 A0 A0 A0 C2 A0 A0
-A0 EB C9 D5 C9 EB C9 A0
-A0 ED CB CA CB ED CB A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 99 81 8E 8E 85 93 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A7
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 D5 C0 AE F0 C9 A0 A0
-A0 CA C9 C2 C2 C2 A0 A0
-A0 C0 CB F1 ED CB A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // Q8
-  H(`
-E8 E8 E8 E8 E8 E8 E8 E8
-A0 A0 A0 A0 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-90 8F 8B 85 A0 A0 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-B1 B0 B2 B4 AC B1 A0 A0
-A0 A0 A0 A0 A0 A0 A0 A0
-E8 E8 E8 E8 E8 E8 E8 E8
-`),
-
-  // A8
-  H(`
-4F 77 77 77 77 77 77 50
-74 01 20 20 20 20 20 67
-74 20 20 20 20 20 20 67
-74 20 20 20 20 20 20 67
-74 20 20 20 20 20 20 67
-74 20 20 20 20 20 20 67
-74 20 20 20 20 20 20 67
-4C 6F 6F 6F 6F 6F 6F 7A
-`)
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     8C 84 81 A0 A3 B2 B2 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     93 85 83 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     81 84 83 A0 A3 B2 B2 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8
+     A0 A0 A0 A0 A0 A0 A0 A0 A0 D5 DB C3 A0 A0 A0 A0
+     A0 CA DB C9 B2 84 A0 A0 A0 C3 DB CB A0 A0 A0 A0
+     E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     B1 B0 B0 B0 B0 B0 B0 B1 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8
+     A0 A0 A0 A0 A0 A0 A0 A0 A0 D5 DB C3 A0 A0 A0 A0
+     A0 CA DB C9 B8 B1 A0 A0 A0 C3 DB CB A0 A0 A0 A0
+     E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 90 8F 8B 85 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 B5 B3 B2 B8 B0 AC B0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`4F 77 77 77 77 77 77 50 65 20 20 20 20 20 20 67
+     65 20 A0 A0 A0 A0 20 67 65 20 A0 A0 A0 A0 20 67
+     65 20 A0 A0 A0 A0 20 67 65 20 A0 A0 A0 A0 20 67
+     65 20 20 20 20 20 20 67 4C 6F 6F 6F 6F 6F 6F 7A`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     B1 B0 B0 B1 B0 B0 B1 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 98 8F 92 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     B1 B0 B0 B1 B0 B0 B1 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 D5 C3 C9 A0 A0 A0 A0 A0 DD AF DD A0
+     A0 A0 A0 A0 DD AF DD A0 A0 A0 9A 85 92 C3 CB A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 90 92 89 8E 94 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 69 20 20 5F A0 A0
+     A0 A0 A0 A0 A0 20 A0 A0 A0 A0 A0 69 20 E9 A0 A0
+     A0 A0 A0 20 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 20 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 C2 A0 AE C2 A0 A0 A0 A0 EB C9 EE C2 A0 A0 A0
+     A0 ED CB F1 CA C3 A0 A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 88 85 92 84 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 C3 F2 C3 A0 A0 A0 A0 A0 A0 DD F0 C3 F0 C9 A0
+     A0 A0 C2 EB C3 C2 C2 A0 A0 A0 C2 ED C3 ED CB A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 C2 A0 A0 A0 C2 A0 A0 A0 EB C9 D5 C9 EB C9 A0
+     A0 ED CB CA CB ED CB A0 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 99 81 8E 8E 85 93 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 A0 D5 C0 AE F0 C9 A0 A0
+     A0 CA C9 C2 C2 C2 A0 A0 A0 C0 CB F1 ED CB A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`E8 E8 E8 E8 E8 E8 E8 E8 A0 A0 A0 A0 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 90 8F 8B 85 A0 A0 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 B1 B0 B2 B4 AC B1 A0 A0
+     A0 A0 A0 A0 A0 A0 A0 A0 E8 E8 E8 E8 E8 E8 E8 E8`),
+  H(`4F 77 77 77 77 77 77 50 74 01 20 20 20 20 20 67
+     74 20 20 20 20 20 20 67 74 20 20 20 20 20 20 67
+     74 20 20 20 20 20 20 67 74 20 20 20 20 20 20 67
+     74 20 20 20 20 20 20 67 4C 6F 6F 6F 6F 6F 6F 7A`)
 ];
 
+// ─── Skalierung ─────────────────────────────────────────────────────
+
 function cssPx(name){
-  return parseFloat(
-    getComputedStyle(document.documentElement)
-      .getPropertyValue(name)
-  );
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
 }
+
+// Aktueller Zoom-Faktor (für Koordinaten-Umrechnung)
+let currentZoom = 1;
 
 function fit(){
   const cw = cssPx("--cw");
   const ch = cssPx("--ch");
-
   const baseW = 80 * cw;
   const baseH = 25 * ch;
-
-  const availableW = window.innerWidth;
-  const availableH = window.innerHeight - 20;
-
-  // Nur ganzzahlige Skalierungen erlauben: 1x, 2x, 3x...
   let s = Math.min(
-    Math.floor(availableW / baseW),
-    Math.floor(availableH / baseH)
+    Math.floor(window.innerWidth  / baseW),
+    Math.floor((window.innerHeight - 20) / baseH)
   );
   if(s < 1) s = 1;
-
-  // zoom statt transform:scale
+  currentZoom = s;
   wrap.style.transform = "none";
   wrap.style.zoom = s;
 }
 
 window.addEventListener("resize", fit);
 
+// ─── Zellen aufbauen ────────────────────────────────────────────────
+
 function makeCells(){
   screen.innerHTML = "";
   cells = [];
-
-  for(let y=0;y<ROWS;y++){
+  for(let y = 0; y < ROWS; y++){
     const row = [];
-
-    for(let x=0;x<COLS;x++){
+    for(let x = 0; x < COLS; x++){
       const el = document.createElement("div");
       el.className = "cell";
       el.textContent = " ";
       el.style.color = FG;
       el.style.backgroundColor = BG;
       el.style.gridColumn = String(x + 1);
-      el.style.gridRow = String(y + 1);
+      el.style.gridRow    = String(y + 1);
       screen.appendChild(el);
       row.push(el);
     }
-
     cells.push(row);
   }
 }
 
-function put(x,y,ch,fg=FG,bg=BG){
+// ─── Zeichnen ───────────────────────────────────────────────────────
+
+function put(x, y, ch, fg=FG, bg=BG){
   if(x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
-
   const el = cells[y][x];
-
   el.innerHTML = "";
   el.style.color = fg;
   el.style.backgroundColor = bg;
-
   ch = ch || " ";
-
-  if(ch === " "){
-    el.textContent = " ";
-    return;
-  }
-
+  if(ch === " "){ el.textContent = " "; return; }
   const span = document.createElement("span");
   span.className = "g";
   span.textContent = ch;
-
   el.appendChild(span);
 }
 
-function putScreenByte(x,y,byte){
-  const ch = screenByteToC64ProChar(byte);
-
-  /*
-    Wichtig:
-    NICHT manuell Vorder-/Hintergrund invertieren.
-    Der Font-Glyph selbst ist bereits Reverse, wenn byte >= $80 ist.
-  */
-  put(x,y,ch,FG,BG);
+function putScreenByte(x, y, byte){
+  put(x, y, screenByteToC64ProChar(byte), FG, BG);
 }
 
-function write(x,y,text,fg=FG,bg=BG){
-  const chars = Array.from(String(text).toUpperCase());
-
-  for(let i=0;i<chars.length;i++){
-    put(x+i,y,chars[i],fg,bg);
-  }
+function write(x, y, text, fg=FG, bg=BG){
+  Array.from(String(text).toUpperCase()).forEach((ch, i) => put(x+i, y, ch, fg, bg));
 }
 
 function clear(){
-  for(let y=0;y<ROWS;y++){
-    for(let x=0;x<COLS;x++){
-      put(x,y," ",FG,BG);
-    }
-  }
+  for(let y = 0; y < ROWS; y++)
+    for(let x = 0; x < COLS; x++)
+      put(x, y, " ", FG, BG);
 }
 
-function drawByteTile(x,y,bytes){
-  for(let row=0;row<8;row++){
-    for(let col=0;col<8;col++){
-      const b = bytes[row * 8 + col];
-      putScreenByte(x+col,y+row,b);
-    }
-  }
+function drawByteTile(x, y, bytes){
+  for(let row = 0; row < 8; row++)
+    for(let col = 0; col < 8; col++)
+      putScreenByte(x+col, y+row, bytes[row*8+col]);
 }
 
 function drawEmptyTile(index){
   const [x,y] = cardPositions[index];
-
-  for(let yy=0;yy<8;yy++){
-    for(let xx=0;xx<8;xx++){
-      put(x+xx,y+yy," ",FG,BG);
-    }
-  }
+  for(let yy = 0; yy < 8; yy++)
+    for(let xx = 0; xx < 8; xx++)
+      put(x+xx, y+yy, " ", FG, BG);
 }
 
 function drawBack(index){
   const [x,y] = cardPositions[index];
-  drawByteTile(x,y,BACK_BYTES);
+  drawByteTile(x, y, BACK_BYTES);
 }
 
 function drawFace(index){
   const [x,y] = cardPositions[index];
-  drawByteTile(x,y,FACE_BYTES[deck[index].faceIndex]);
+  drawByteTile(x, y, FACE_BYTES[deck[index].faceIndex]);
 }
 
+// ─── Clickable-Markierungen ─────────────────────────────────────────
+//
+// Wir markieren zwei Arten von Zellen als .clickable und speichern
+// den Karten-Index als data-Attribut:
+//   1. Alle 8×8 Zellen einer nicht-entfernten Karte
+//   2. Die Buchstaben-Zellen (1 Zelle pro Karte)
+//
+// Das passiert nach jedem drawMain()-Aufruf.
+
+function updateClickable(){
+  document.querySelectorAll(".cell.clickable").forEach(el => {
+    el.classList.remove("clickable");
+    delete el.dataset.cardIndex;
+    delete el.dataset.action;
+  });
+
+  if(stopped) return;
+
+  for(let i = 0; i < 16; i++){
+    const card = deck[i];
+    if(card.removed) continue;
+
+    const [cx, cy] = cardPositions[i];
+    for(let dy = 0; dy < 8; dy++){
+      for(let dx = 0; dx < 8; dx++){
+        const el = cells[cy + dy][cx + dx];
+        el.classList.add("clickable");
+        el.dataset.cardIndex = String(i);
+      }
+    }
+
+    const keyCol = 4 + i % 8 * 10;
+    const keyRow = i < 8 ? KEY_ROW_TOP : KEY_ROW_BOTTOM;
+    const keyEl  = cells[keyRow][keyCol];
+    keyEl.classList.add("clickable");
+    keyEl.dataset.cardIndex = String(i);
+  }
+
+  // EXIT: Spalten 72–79, Zeilen 23–24
+  for(let row = 23; row <= 24; row++){
+    for(let col = 72; col <= 79; col++){
+      const el = cells[row][col];
+      el.classList.add("clickable");
+      el.dataset.action = "exit";
+    }
+  }
+}
+
+// ─── Spiel-Zeichnen ─────────────────────────────────────────────────
+
 function drawKeys(){
-  for(let i=0;i<8;i++){
-    write(4 + i*10,10,keysTop[i],FG,BG);
-    write(4 + i*10,22,keysBottom[i],FG,BG);
+  for(let i = 0; i < 8; i++){
+    write(4 + i*10, KEY_ROW_TOP,    keysTop[i],    FG, BG);
+    write(4 + i*10, KEY_ROW_BOTTOM, keysBottom[i], FG, BG);
   }
 }
 
 function drawScore(){
-  write(1,24,"SCORE:",FG,BG);
-  write(8,24,String(score).padStart(3," "),FG,BG);
-  write(12,24,"(MAX 200)",FG,BG);
-  write(73,24,"E(X)IT",FG,BG);
+  write(1,  24, "SCORE:",          FG, BG);
+  write(8,  24, String(score).padStart(3," "), FG, BG);
+  write(12, 24, "(MAX 200)",       FG, BG);
+  write(73, 24, "E(X)IT",          FG, BG);
 }
 
 function drawMain(){
   clear();
-
-  for(let i=0;i<16;i++){
+  for(let i = 0; i < 16; i++){
     const card = deck[i];
-
-    if(card.removed){
-      drawEmptyTile(i);
-    }
-    else if(card.faceUp){
-      drawFace(i);
-    }
-    else{
-      drawBack(i);
-    }
+    if     (card.removed) drawEmptyTile(i);
+    else if(card.faceUp)  drawFace(i);
+    else                  drawBack(i);
   }
-
   drawKeys();
   drawScore();
+  updateClickable();   // ← nach jedem Neuzeichnen aktualisieren
 }
+
+// ─── Boot ───────────────────────────────────────────────────────────
+
+async function bootSequence(){
+  clear();
+
+  let cursorVisible = false;
+  let cursorX = 0;
+  let cursorY = 0;
+  let cursorTimer = null;
+
+  function startCursor(x, y){
+    cursorX = x;
+    cursorY = y;
+    cursorVisible = false;
+    if(cursorTimer) clearInterval(cursorTimer);
+    cursorTimer = setInterval(() => {
+      cursorVisible = !cursorVisible;
+      putScreenByte(cursorX, cursorY, cursorVisible ? 0xA0 : 0x20);
+    }, 400);
+  }
+
+  function stopCursor(){
+    if(cursorTimer) clearInterval(cursorTimer);
+    cursorTimer = null;
+    putScreenByte(cursorX, cursorY, 0x20);
+  }
+
+  // ── Header ──
+  write(14, 0, "COMMODORE BASIC V7.0  122365 BYTES FREE", FG, BG);
+  write(17, 1, "(C)1986 COMMODORE ELECTRONICS, LTD.", FG, BG);
+  write(20, 2, "(C)1977 MICROSOFT CORP.", FG, BG);
+  write(22, 3, "ALL RIGHTS RESERVED", FG, BG);
+
+  write(0, 5, "READY.", FG, BG);
+  startCursor(0, 6);
+  await wait(800);
+  stopCursor();
+
+  // ── LOAD-Befehl tippen ──
+  const cmd = 'LOAD"*",8,1';
+  for(let i = 0; i < cmd.length; i++){
+    write(0, 6, cmd.slice(0, i+1), FG, BG);
+    startCursor(i + 1, 6);
+    await wait(55 + Math.random() * 40);
+  }
+
+  await wait(1300);
+  stopCursor();
+  await wait(150);
+
+  // ── SEARCHING ──
+  write(0, 8, "SEARCHING FOR *", FG, BG);
+  startCursor(0, 9);
+  await wait(1200);
+  stopCursor();
+
+  // ── LOADING ──
+  write(0, 9, "LOADING", FG, BG);
+  startCursor(0, 10);
+  await wait(1200);
+  stopCursor();
+
+  // ── READY. ──
+  write(0, 10, "READY.", FG, BG);
+  startCursor(0, 111);
+  await wait(1000);
+  stopCursor();
+
+  // ── RUN ──
+  write(0, 11, "RUN", FG, BG);
+  startCursor(0, 12);
+  await wait(600);
+  stopCursor();
+
+  // ── Kurzes Flackern ──
+//  for(let i = 0; i < 3; i++){
+//    clear();
+//    await wait(80);
+//    write(0, 10, "RUN", FG, BG);
+//    await wait(80);
+//  }
+
+  clear();
+  await wait(200);
+
+  // ── Spiel starten ──
+  buildDeck();
+  drawMain();
+  screen.focus();
+}
+// ─── Deck ───────────────────────────────────────────────────────────
 
 function buildDeck(){
   deck = [];
-
-  for(let i=0;i<16;i++){
-    const pair = Math.floor(i / 2);
+  for(let i = 0; i < 16; i++){
+    const pair  = Math.floor(i / 2);
     const value = i % 2 === 0 ? pair + 1 : 255 - (pair + 1);
-
-    deck.push({
-      faceIndex:i,
-      pair,
-      value,
-      faceUp:false,
-      removed:false
-    });
+    deck.push({ faceIndex:i, pair, value, faceUp:false, removed:false });
   }
-
   shuffle(deck);
 }
 
 function shuffle(arr){
-  for(let i=arr.length-1;i>0;i--){
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i],arr[j]] = [arr[j],arr[i]];
+  for(let i = arr.length-1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i+1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
+
+// ─── Spiel-Logik ────────────────────────────────────────────────────
 
 function keyToIndex(key){
   return allKeys.indexOf(String(key).toUpperCase());
 }
 
 function wait(ms){
-  return new Promise(resolve => setTimeout(resolve,ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function choose(index){
   if(busy || stopped) return;
   if(index < 0 || index >= 16) return;
-
   const card = deck[index];
-
   if(card.removed) return;
-
-  /*
-    Gleiche Karte nochmal wählen ist im Original möglich.
-    Sie wird dann nach kurzer Zeit einfach wieder zurückgesetzt.
-  */
   if(card.faceUp && selected[0] !== index) return;
 
   card.faceUp = true;
   drawMain();
-
   selected.push(index);
-
-  if(selected.length < 2){
-    return;
-  }
+  if(selected.length < 2) return;
 
   busy = true;
-
   const aIndex = selected[0];
   const bIndex = selected[1];
-
   const a = deck[aIndex];
   const b = deck[bIndex];
 
   await wait(1100);
 
   if(aIndex !== bIndex && a.value + b.value === 255){
-    a.removed = true;
-    b.removed = true;
-    a.faceUp = false;
-    b.faceUp = false;
-
+    a.removed = b.removed = true;
+    a.faceUp  = b.faceUp  = false;
     score += 25;
     if(score > 200) score = 200;
-
     playMatchSound();
-  }
-  else{
-    a.faceUp = false;
-    b.faceUp = false;
-
-    if(aIndex !== bIndex){
-      score -= 5;
-      if(score < 0) score = 0;
-    }
+  } else {
+    a.faceUp = b.faceUp = false;
+    if(aIndex !== bIndex){ score -= 5; if(score < 0) score = 0; }
   }
 
   selected = [];
-  busy = false;
-
+  busy     = false;
   drawMain();
   checkWin();
 }
 
 function checkWin(){
-  if(deck.every(c => c.removed)){
-    showWin();
-  }
+  if(deck.every(c => c.removed)) showWin();
 }
 
 function showWin(){
-  stopped = true;
+  stopped  = true;
   winBlink = false;
-
   if(winTimer) clearInterval(winTimer);
-
   drawWin();
-
-  winTimer = setInterval(() => {
-    winBlink = !winBlink;
-    drawWin();
-  },650);
+  winTimer = setInterval(() => { winBlink = !winBlink; drawWin(); }, 650);
 }
 
 function drawWin(){
@@ -701,95 +607,129 @@ function drawWin(){
 
   if(winBlink){
     drawScore();
-    write(30,18,"PRESS X TO EXIT",FG,BG);
-    return;
+    write(30, 18, "PRESS X TO EXIT", FG, BG);
+  } else {
+    const logo = [
+      "                                                                                ",
+      "                                                                                ",
+      "        YY    YY   OOOOOO   UU    UU        WW     WW  II  NN     NN           ",
+      "         YY  YY   OO    OO  UU    UU        WW     WW  II  NNN    NN           ",
+      "          YYYY    OO    OO  UU    UU        WW  W  WW  II  NN NN  NN           ",
+      "           YY     OO    OO  UU    UU        WW WWW WW  II  NN  NN NN           ",
+      "           YY     OO    OO  UU    UU        WWW   WWW  II  NN   NNNN           ",
+      "           YY      OOOOOO    UUUUUU          WW   WW   II  NN    NNN           "
+    ];
+    for(let i = 0; i < logo.length; i++) write(0, 4+i, logo[i], FG, BG);
+    drawScore();
+    write(30, 18, "PRESS X TO EXIT", FG, BG);
   }
 
-  const logo = [
-    "                                                                                ",
-    "                                                                                ",
-    "        YY    YY   OOOOOO   UU    UU        WW     WW  II  NN     NN           ",
-    "         YY  YY   OO    OO  UU    UU        WW     WW  II  NNN    NN           ",
-    "          YYYY    OO    OO  UU    UU        WW  W  WW  II  NN NN  NN           ",
-    "           YY     OO    OO  UU    UU        WW WWW WW  II  NN  NN NN           ",
-    "           YY     OO    OO  UU    UU        WWW   WWW  II  NN   NNNN           ",
-    "           YY      OOOOOO    UUUUUU          WW   WW   II  NN    NNN           "
-  ];
-
-  for(let i=0;i<logo.length;i++){
-    write(0,4+i,logo[i],FG,BG);
+  // "PRESS X TO EXIT" in Zeile 18 klickbar machen (nach clear() neu setzen)
+  for(let col = 30; col <= 44; col++){
+    cells[18][col].classList.add("clickable");
+    cells[18][col].dataset.action = "exit";
   }
-
-  drawScore();
-  write(30,18,"PRESS X TO EXIT",FG,BG);
 }
 
 function drawExit(){
   if(winTimer) clearInterval(winTimer);
-
   stopped = true;
   clear();
+  write(0, 0, "READY.", FG, BG);
 
-  write(0,0,"C128 VDC MEMORY",FG,BG);
-  write(0,2,"PROGRAM ENDED",FG,BG);
-  write(0,4,"READY.",FG,BG);
+  // Blinkender Cursor
+  let cursorVisible = false;
+  setInterval(() => {
+    cursorVisible = !cursorVisible;
+    putScreenByte(0, 1, cursorVisible ? 0xA0 : 0x20);
+  }, 400);
 }
+
+// ─── Sound ──────────────────────────────────────────────────────────
 
 function playMatchSound(){
   try{
     const AC = window.AudioContext || window.webkitAudioContext;
     if(!AC) return;
-
-    const ac = new AC();
+    const ac    = new AC();
     const freqs = [330,440,550,660];
-
     let t = ac.currentTime;
-
     for(const f of freqs){
-      const osc = ac.createOscillator();
+      const osc  = ac.createOscillator();
       const gain = ac.createGain();
-
-      osc.type = "square";
+      osc.type            = "square";
       osc.frequency.value = f;
-
-      gain.gain.setValueAtTime(0.06,t);
-      gain.gain.exponentialRampToValueAtTime(0.001,t+0.13);
-
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t+0.13);
       osc.connect(gain);
       gain.connect(ac.destination);
-
-      osc.start(t);
-      osc.stop(t+0.14);
-
+      osc.start(t); osc.stop(t+0.14);
       t += 0.15;
     }
-  }catch(e){}
+  } catch(e){}
 }
+
+// ─── Eingabe: Tastatur ───────────────────────────────────────────────
 
 window.addEventListener("keydown", e => {
   const key = e.key.toUpperCase();
-
-  if(key === "X"){
-    e.preventDefault();
-    drawExit();
-    return;
-  }
-
+  if(key === "X"){ e.preventDefault(); drawExit(); return; }
   if(stopped) return;
-
   const index = keyToIndex(key);
-
-  if(index !== -1){
-    e.preventDefault();
-    choose(index);
-  }
+  if(index !== -1){ e.preventDefault(); choose(index); }
 });
+
+// ─── Eingabe: Maus & Touch ───────────────────────────────────────────
+//
+// Strategie:
+//   - Ein einzelner Event-Listener auf #screen (Event-Delegation)
+//   - Bei Klick/Touch: nächste Elternelement mit data-cardIndex suchen
+//   - Touch: preventDefault() verhindert doppeltes Feuern (touch→mouse)
+
+function handlePointer(e){
+  // Ziel-Element ermitteln (auch bei Touch)
+  let target;
+  if(e.type === "touchend"){
+    const touch = e.changedTouches[0];
+    target = document.elementFromPoint(touch.clientX, touch.clientY);
+  } else {
+    target = e.target;
+  }
+
+  if(!target) return;
+
+  // Nach oben suchen bis .cell mit data-Attribut
+  const cell = target.closest("[data-card-index], [data-action]")
+            || target.closest(".cell[data-card-index], .cell[data-action]");
+
+  // Direkt am Element oder Parent-Zelle prüfen
+  let el = target;
+  while(el && el !== screen){
+    if(el.dataset.cardIndex !== undefined){
+      e.preventDefault();
+      choose(parseInt(el.dataset.cardIndex, 10));
+      return;
+    }
+    if(el.dataset.action === "exit"){
+      e.preventDefault();
+      drawExit();
+      return;
+    }
+    el = el.parentElement;
+  }
+}
+
+screen.addEventListener("click",    handlePointer);
+screen.addEventListener("touchend", handlePointer, { passive: false });
+
+// ─── Start ───────────────────────────────────────────────────────────
 
 makeCells();
 fit();
-buildDeck();
-drawMain();
-screen.focus();
+bootSequence();
+//buildDeck();
+//drawMain();
+//screen.focus();
 
 })();
 </script>
