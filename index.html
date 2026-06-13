@@ -113,8 +113,7 @@ body{
 </div>
 
 <div id="license">
-  C64 TrueType fonts © Style64 —
-  used unmodified via @font-face according to the included C64 TrueType license.
+  C64 TrueType fonts © STYLE —
   <a href="https://style64.org/c64-truetype" target="_blank" rel="noopener">https://style64.org/c64-truetype</a>
 </div>
 
@@ -480,33 +479,39 @@ async function bootSequence(){
     await wait(55 + Math.random() * 40);
   }
 
-  await wait(1300);
+  await wait(1200);
   stopCursor();
-  await wait(150);
+  await wait(1200);
 
   // ── SEARCHING ──
   write(0, 8, "SEARCHING FOR *", FG, BG);
-  startCursor(0, 9);
+  //startCursor(0, 9);
   await wait(1200);
-  stopCursor();
+  //stopCursor();
 
   // ── LOADING ──
   write(0, 9, "LOADING", FG, BG);
-  startCursor(0, 10);
+  //startCursor(0, 10);
   await wait(1200);
-  stopCursor();
+  //stopCursor();
 
   // ── READY. ──
   write(0, 10, "READY.", FG, BG);
-  startCursor(0, 111);
-  await wait(1000);
+  startCursor(0, 11);
+  await wait(1200);
   stopCursor();
 
-  // ── RUN ──
-  write(0, 11, "RUN", FG, BG);
-  startCursor(0, 12);
+  // ── RUN tippen ──
+  const run = 'RUN';
+  for(let i = 0; i < run.length; i++){
+    write(0, 11, run.slice(0, i+1), FG, BG);
+    startCursor(i + 1, 11);
+    await wait(55 + Math.random() * 40);
+  }
+
   await wait(600);
   stopCursor();
+  await wait(600);
 
   // ── Kurzes Flackern ──
 //  for(let i = 0; i < 3; i++){
