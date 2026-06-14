@@ -140,6 +140,10 @@ let score    = 0;
 let winTimer = null;
 let winBlink = false;
 
+let mode            = "boot";
+let exitCursorTimer = null;
+let exitMazeTimer   = null;
+
 const keysTop    = ["1","2","3","4","5","6","7","8"];
 const keysBottom = ["Q","W","E","R","T","Y","U","I"];
 const allKeys    = keysTop.concat(keysBottom);
@@ -323,14 +327,31 @@ function putScreenByte(x, y, byte){
   put(x, y, screenByteToC64ProChar(byte), FG, BG);
 }
 
+function petsciiToC64ProChar(byte){
+  byte &= 0xff;
+  return String.fromCodePoint(0xe000 + byte);
+}
+
+function putPETSCII(x, y, byte, fg = FG, bg = BG){
+  put(x, y, petsciiToC64ProChar(byte), fg, bg);
+}
+
 function write(x, y, text, fg=FG, bg=BG){
   Array.from(String(text).toUpperCase()).forEach((ch, i) => put(x+i, y, ch, fg, bg));
 }
 
 function clear(){
-  for(let y = 0; y < ROWS; y++)
-    for(let x = 0; x < COLS; x++)
+  for(let y = 0; y < ROWS; y++){
+    for(let x = 0; x < COLS; x++){
+      const el = cells[y][x];
+
+      el.classList.remove("clickable");
+      delete el.dataset.cardIndex;
+      delete el.dataset.action;
+
       put(x, y, " ", FG, BG);
+    }
+  }
 }
 
 function drawByteTile(x, y, bytes){
@@ -421,6 +442,8 @@ function drawScore(){
 }
 
 function drawMain(){
+  mode = "game";
+
   clear();
   for(let i = 0; i < 16; i++){
     const card = deck[i];
@@ -430,12 +453,13 @@ function drawMain(){
   }
   drawKeys();
   drawScore();
-  updateClickable();   // ← nach jedem Neuzeichnen aktualisieren
+  updateClickable();
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────
 
 async function bootSequence(){
+  mode = "boot";
   clear();
 
   let cursorVisible = false;
@@ -577,7 +601,9 @@ async function choose(index){
   const b = deck[bIndex];
 
   await wait(1100);
-
+  
+  if(stopped || mode !== "game") return;
+  
   if(aIndex !== bIndex && a.value + b.value === 255){
     a.removed = b.removed = true;
     a.faceUp  = b.faceUp  = false;
@@ -601,10 +627,17 @@ function checkWin(){
 
 function showWin(){
   stopped  = true;
+  mode     = "win";
   winBlink = false;
+
   if(winTimer) clearInterval(winTimer);
+
   drawWin();
-  winTimer = setInterval(() => { winBlink = !winBlink; drawWin(); }, 650);
+
+  winTimer = setInterval(() => {
+    winBlink = !winBlink;
+    drawWin();
+  }, 650);
 }
 
 function drawWin(){
@@ -637,18 +670,195 @@ function drawWin(){
 }
 
 function drawExit(){
-  if(winTimer) clearInterval(winTimer);
   stopped = true;
+  mode = "exit";
+
+  if(winTimer){
+    clearInterval(winTimer);
+    winTimer = null;
+  }
+
+  if(exitCursorTimer){
+    clearInterval(exitCursorTimer);
+    exitCursorTimer = null;
+  }
+
+  if(exitMazeTimer){
+    clearInterval(exitMazeTimer);
+    exitMazeTimer = null;
+  }
+
   clear();
+
+  let x = 0;
+  let y = 0;
+  let cursorVisible = false;
+
+  function scrollIfNeeded(){
+    if(y < ROWS) return;
+
+    for(let yy = 1; yy < ROWS; yy++){
+      for(let xx = 0; xx < COLS; xx++){
+        const from = cells[yy][xx];
+        const to   = cells[yy - 1][xx];
+
+        /*
+          Wichtig:
+          Nur innerHTML kopieren.
+          Nicht textContent setzen, sonst geht der .g-Span verloren
+          und die Zeichen werden nach dem Scrollen halbhoch.
+        */
+        to.innerHTML = from.innerHTML;
+        to.style.color = from.style.color;
+        to.style.backgroundColor = from.style.backgroundColor;
+      }
+    }
+
+    for(let xx = 0; xx < COLS; xx++){
+      put(xx, ROWS - 1, " ", FG, BG);
+    }
+
+    y = ROWS - 1;
+  }
+
+  function newline(){
+    putScreenByte(x, y, 0x20);
+    x = 0;
+    y++;
+    scrollIfNeeded();
+  }
+
+  function drawCursor(){
+    putScreenByte(x, y, cursorVisible ? 0xA0 : 0x20);
+  }
+
+  function clearCursor(){
+    putScreenByte(x, y, 0x20);
+  }
+
+  function startCursor(){
+    if(exitCursorTimer){
+      clearInterval(exitCursorTimer);
+    }
+
+    cursorVisible = false;
+
+    exitCursorTimer = setInterval(() => {
+      cursorVisible = !cursorVisible;
+      drawCursor();
+    }, 400);
+  }
+
+  function stopCursor(){
+    if(exitCursorTimer){
+      clearInterval(exitCursorTimer);
+      exitCursorTimer = null;
+    }
+
+    clearCursor();
+  }
+
+  function typeText(text, done, minDelay = 85, randomDelay = 70){
+    let i = 0;
+
+    function next(){
+      if(i >= text.length){
+        if(done) done();
+        return;
+      }
+
+      clearCursor();
+
+      put(x, y, text[i], FG, BG);
+
+      x++;
+      i++;
+
+      if(x >= COLS){
+        x = 0;
+        y++;
+        scrollIfNeeded();
+      }
+
+      cursorVisible = true;
+      drawCursor();
+
+      setTimeout(next, minDelay + Math.random() * randomDelay);
+    }
+
+    next();
+  }
+
+  function startMaze(){
+    stopCursor();
+  
+    /*
+      Langsamer als vorher:
+      nur ein Maze-Zeichen pro Tick.
+    */
+    exitMazeTimer = setInterval(() => {
+      const ch = Math.random() < 0.5 ? 205 : 206;
+  
+      putPETSCII(x, y, ch, FG, BG);
+  
+      x++;
+  
+      if(x >= COLS){
+        x = 0;
+        y++;
+        scrollIfNeeded();
+      }
+    }, 38);
+  }
+
+  /*
+    Richtiger BASIC-Ablauf:
+    
+    READY.
+    10 PRINT ...
+    RUN
+    Maze
+  */
+
   write(0, 0, "READY.", FG, BG);
 
-  // Blinkender Cursor
-  let cursorVisible = false;
-  setInterval(() => {
-    cursorVisible = !cursorVisible;
-    putScreenByte(0, 1, cursorVisible ? 0xA0 : 0x20);
-  }, 400);
+  x = 0;
+  y = 1;
+
+  startCursor();
+
+  setTimeout(() => {
+    typeText('10 PRINT CHR$(205.5+RND(1)); : GOTO 10', () => {
+
+      /*
+        ENTER nach der Programmzeile.
+        Kein READY. danach!
+        Nur neue Zeile mit blinkendem Cursor.
+      */
+      setTimeout(() => {
+        newline();
+
+        setTimeout(() => {
+          typeText("RUN", () => {
+
+            /*
+              ENTER nach RUN.
+              Danach beginnt sofort die Ausgabe.
+            */
+            setTimeout(() => {
+              newline();
+              startMaze();
+            }, 650);
+
+          }, 100, 80);
+        }, 900);
+
+      }, 700);
+
+    }, 90, 80);
+  }, 900);
 }
+
 
 // ─── Sound ──────────────────────────────────────────────────────────
 
@@ -678,10 +888,46 @@ function playMatchSound(){
 
 window.addEventListener("keydown", e => {
   const key = e.key.toUpperCase();
-  if(key === "X"){ e.preventDefault(); drawExit(); return; }
+
+  /*
+    Während BOOT und EXIT/Maze auf keine Taste reagieren.
+    Damit kann X weder beim Boot noch während 10 PRINT/RUN/Maze neu auslösen.
+  */
+  if(mode === "boot" || mode === "exit"){
+    e.preventDefault();
+    return;
+  }
+
+  /*
+    X nur im Spiel oder im Win-Screen erlauben.
+  */
+  if(key === "X"){
+    if(mode === "game" || mode === "win"){
+      e.preventDefault();
+      drawExit();
+    }
+    return;
+  }
+
+  /*
+    Im Win-Screen keine Kartentasten mehr.
+  */
+  if(mode === "win"){
+    e.preventDefault();
+    return;
+  }
+
+  /*
+    Normales Spiel.
+  */
   if(stopped) return;
+
   const index = keyToIndex(key);
-  if(index !== -1){ e.preventDefault(); choose(index); }
+
+  if(index !== -1){
+    e.preventDefault();
+    choose(index);
+  }
 });
 
 // ─── Eingabe: Maus & Touch ───────────────────────────────────────────
@@ -692,8 +938,13 @@ window.addEventListener("keydown", e => {
 //   - Touch: preventDefault() verhindert doppeltes Feuern (touch→mouse)
 
 function handlePointer(e){
-  // Ziel-Element ermitteln (auch bei Touch)
+  if(mode === "boot" || mode === "exit"){
+    e.preventDefault();
+    return;
+  }
+
   let target;
+
   if(e.type === "touchend"){
     const touch = e.changedTouches[0];
     target = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -703,23 +954,25 @@ function handlePointer(e){
 
   if(!target) return;
 
-  // Nach oben suchen bis .cell mit data-Attribut
-  const cell = target.closest("[data-card-index], [data-action]")
-            || target.closest(".cell[data-card-index], .cell[data-action]");
-
-  // Direkt am Element oder Parent-Zelle prüfen
   let el = target;
+
   while(el && el !== screen){
     if(el.dataset.cardIndex !== undefined){
+      if(mode !== "game" || stopped) return;
+
       e.preventDefault();
       choose(parseInt(el.dataset.cardIndex, 10));
       return;
     }
+
     if(el.dataset.action === "exit"){
-      e.preventDefault();
-      drawExit();
+      if(mode === "game" || mode === "win"){
+        e.preventDefault();
+        drawExit();
+      }
       return;
     }
+
     el = el.parentElement;
   }
 }
